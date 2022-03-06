@@ -1,14 +1,14 @@
-# [programs.localnet]
-# myepicproject = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
-[programs.devnet]
-myepicproject = "H2i939Pa7W34HQdUxCMr9rzmj7tdu3sFxok67maMETn"
+[programs.localnet]
+myepicproject = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+# [programs.devnet]
+# myepicproject = "H2i939Pa7W34HQdUxCMr9rzmj7tdu3sFxok67maMETn"
 
 [registry]
 url = "https://anchor.projectserum.com"
 
 [provider]
-# cluster = "localnet"
-cluster = "devnet"
+cluster = "localnet"
+# cluster = "devnet"
 wallet = "/Users/aoikurokawa/.config/solana/id.json"
 
 [scripts]
