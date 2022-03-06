@@ -42,6 +42,13 @@ const main = async () => {
     },
   });
 
+  await program.rpc.addGif("https://google.com", {
+    accounts: {
+      baseAccount: baseAccount.publicKey,
+      user: provider.wallet.publicKey,
+    },
+  });
+
   account = await program.account.baseAccount.fetch(baseAccount.publicKey);
   console.log("Gif Count", account.totalGifs.toString());
 
@@ -54,7 +61,7 @@ const main = async () => {
   account = await program.account.baseAccount.fetch(baseAccount.publicKey);
 
   // Access gif_list on the account!
-  console.log("GIF Count", account.gifList);
+  console.log("GIF List", account.gifList);
 };
 
 const runMain = async () => {
