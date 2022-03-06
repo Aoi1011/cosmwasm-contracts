@@ -45,6 +45,14 @@ const main = async () => {
   account = await program.account.baseAccount.fetch(baseAccount.publicKey);
   console.log("Gif Count", account.totalGifs.toString());
 
+  await program.rpc.updateItem("https://i.giphy.com/media/eIG0HfouRQJQr1wBzz/giphy.webp", {
+    accounts: {
+      baseAccount: baseAccount.publicKey,
+    }
+  });
+
+  account = await program.account.baseAccount.fetch(baseAccount.publicKey);
+
   // Access gif_list on the account!
   console.log("GIF Count", account.gifList);
 };
