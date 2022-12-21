@@ -171,14 +171,18 @@ fn query_list(deps: Deps, start_after: Option<u64>, limit: Option<u32>) -> StdRe
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Display;
+
     use cosmwasm_std::{
+        attr, from_binary,
         testing::{mock_dependencies, mock_env, mock_info},
         Addr,
     };
 
     use crate::{
-        msg::InstantiateMsg,
-        state::{Config, CONFIG},
+        contract::{execute, query},
+        msg::{EntryResponse, ExecuteMsg, InstantiateMsg, ListResponse, QueryMsg},
+        state::{Config, Entry, Priority, Status, CONFIG},
     };
 
     use super::instantiate;
@@ -217,6 +221,174 @@ mod tests {
             Config {
                 owner: Addr::unchecked("specified owner".to_string())
             }
+        );
+    }
+
+    #[test]
+    fn create_update_delete_entry() {
+        let mut deps = mock_dependencies();
+
+        let msg = InstantiateMsg { owner: None };
+        let env = mock_env();
+        let info = mock_info("creator", &[]);
+
+        let res = instantiate(deps.as_mut(), env.clone(), info.clone(), msg).unwrap();
+        assert_eq!(0, res.messages.len());
+
+        let msg = ExecuteMsg::NewEntry {
+            description: "A new entry".to_string(),
+            priority: Some(Priority::Medium),
+        };
+
+        let res = execute(deps.as_mut(), env.clone(), info.clone(), msg).unwrap();
+        assert_eq!(
+            res.attributes,
+            vec![
+                attr("method", "execute_create_new_entry"),
+                attr("new_entry_id", "1")
+            ]
+        );
+        // Query single entry
+        let res = query(deps.as_ref(), env.clone(), QueryMsg::QueryEntry { id: 1 }).unwrap();
+        let entry: EntryResponse = from_binary(&res).unwrap();
+        assert_eq!(
+            entry,
+            EntryResponse {
+                id: 1,
+                description: "A new entry".to_string(),
+                status: Status::ToDo,
+                priority: Priority::Medium,
+            }
+        );
+
+        let msg = ExecuteMsg::NewEntry {
+            description: "Another entry".to_string(),
+            priority: Some(Priority::High),
+        };
+        let res = execute(deps.as_mut(), env.clone(), info.clone(), msg).unwrap();
+
+        assert_eq!(
+            res.attributes,
+            vec![
+                attr("method", "execute_create_new_entry"),
+                attr("new_entry_id", "2")
+            ]
+        );
+        // Query the list of entries
+        let res = query(
+            deps.as_ref(),
+            env.clone(),
+            QueryMsg::QueryList {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+        let list: ListResponse = from_binary(&res).unwrap();
+        assert_eq!(
+            Vec::from([
+                Entry {
+                    id: 1,
+                    description: "A new entry".to_string(),
+                    status: Status::ToDo,
+                    priority: Priority::Medium,
+                },
+                Entry {
+                    id: 2,
+                    description: "Another entry".to_string(),
+                    status: Status::ToDo,
+                    priority: Priority::High,
+                }
+            ]),
+            list.entries
+        );
+
+        // update entry
+        let message = ExecuteMsg::UpdateEntry {
+            id: 1,
+            description: Some("Updated entry".to_string()),
+            status: Some(Status::InProgress),
+            priority: Some(Priority::Low),
+        };
+
+        let res = execute(deps.as_mut(), env.clone(), info.clone(), message).unwrap();
+        assert_eq!(
+            res.attributes,
+            vec![
+                attr("method", "execute_update_entry"),
+                attr("updated_entry_id", "1"),
+            ]
+        );
+
+        // Query single entry
+        let res = query(deps.as_ref(), env.clone(), QueryMsg::QueryEntry { id: 1 }).unwrap();
+        let entry: EntryResponse = from_binary(&res).unwrap();
+        assert_eq!(
+            EntryResponse {
+                id: 1,
+                description: "Updated entry".to_string(),
+                status: Status::InProgress,
+                priority: Priority::Low,
+            },
+            entry
+        );
+        let res = query(
+            deps.as_ref(),
+            env.clone(),
+            QueryMsg::QueryList {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+        let list: ListResponse = from_binary(&res).unwrap();
+        assert_eq!(
+            Vec::from([
+                Entry {
+                    id: 1,
+                    description: "Updated entry".to_string(),
+                    status: Status::InProgress,
+                    priority: Priority::Low,
+                },
+                Entry {
+                    id: 2,
+                    description: "Another entry".to_string(),
+                    status: Status::ToDo,
+                    priority: Priority::High,
+                }
+            ]),
+            list.entries
+        );
+
+        let message = ExecuteMsg::DeleteEntry { id: 1 };
+
+        let res = execute(deps.as_mut(), env.clone(), info, message).unwrap();
+        assert_eq!(
+            res.attributes,
+            vec![
+                attr("method", "execute_delete_entry"),
+                attr("deleted_entry_id", "1"),
+            ]
+        );
+        // Query the list of entries
+        let res = query(
+            deps.as_ref(),
+            env.clone(),
+            QueryMsg::QueryList {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+        let list: ListResponse = from_binary(&res).unwrap();
+        assert_eq!(
+            Vec::from([Entry {
+                id: 2,
+                description: "Another entry".to_string(),
+                status: Status::ToDo,
+                priority: Priority::High,
+            }]),
+            list.entries
         );
     }
 }
