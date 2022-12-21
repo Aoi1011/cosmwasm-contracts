@@ -170,4 +170,53 @@ fn query_list(deps: Deps, start_after: Option<u64>, limit: Option<u32>) -> StdRe
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use cosmwasm_std::{
+        testing::{mock_dependencies, mock_env, mock_info},
+        Addr,
+    };
+
+    use crate::{
+        msg::InstantiateMsg,
+        state::{Config, CONFIG},
+    };
+
+    use super::instantiate;
+
+    #[test]
+    fn proper_initialization() {
+        let mut deps = mock_dependencies();
+
+        let msg = InstantiateMsg { owner: None };
+        let env = mock_env();
+        let info = mock_info("creator", &[]);
+
+        let res = instantiate(deps.as_mut(), env.clone(), info.clone(), msg).unwrap();
+        assert_eq!(0, res.messages.len());
+
+        let state = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(
+            state,
+            Config {
+                owner: Addr::unchecked("creator"),
+            }
+        );
+
+        // specifying an owner address in the instantiation message
+        let msg = InstantiateMsg {
+            owner: Some("specified owner".to_string()),
+        };
+
+        let res = instantiate(deps.as_mut(), env, info, msg).unwrap();
+        assert_eq!(0, res.messages.len());
+
+        // it worked, query the state
+        let state = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(
+            state,
+            Config {
+                owner: Addr::unchecked("specified owner".to_string())
+            }
+        );
+    }
+}
