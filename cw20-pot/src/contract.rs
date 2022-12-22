@@ -1,25 +1,40 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
-// use cw2::set_contract_version;
+use cw2::set_contract_version;
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::state::{Config, CONFIG, POT_SEQ};
 
-/*
-// version info for migration info
 const CONTRACT_NAME: &str = "crates.io:cw20-pot";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
-*/
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
-    _deps: DepsMut,
+    deps: DepsMut,
     _env: Env,
-    _info: MessageInfo,
-    _msg: InstantiateMsg,
+    info: MessageInfo,
+    msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    unimplemented!()
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+
+    let owner = msg
+        .admin
+        .and_then(|s| deps.api.addr_validate(s.as_str()).ok())
+        .unwrap_or(info.sender);
+    let config = Config {
+        owner: owner.clone(),
+        cw20_addr: deps.api.addr_validate(msg.cw20_addr.as_str())?,
+    };
+    CONFIG.save(deps.storage, &config)?;
+
+    POT_SEQ.save(deps.storage, &0u64)?;
+
+    Ok(Response::new()
+        .add_attribute("method", "instantiate")
+        .add_attribute("owner", owner)
+        .add_attribute("cw20_addr", msg.cw20_addr))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
