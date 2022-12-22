@@ -150,12 +150,13 @@ mod tests {
     use cosmwasm_std::{
         from_binary,
         testing::{mock_dependencies, mock_env, mock_info, MOCK_CONTRACT_ADDR},
-        Addr, Uint128, Uint64,
+        to_binary, Addr, CosmosMsg, Uint128, Uint64,
     };
+    use cw20::Cw20ExecuteMsg;
 
     use crate::{
         contract::{execute, query},
-        msg::{ExecuteMsg, InstantiateMsg, QueryMsg},
+        msg::{ExecuteMsg, InstantiateMsg, QueryMsg, ReceiveMsg},
         state::Pot,
     };
 
@@ -194,5 +195,82 @@ mod tests {
                 threshold: Uint128::new(100),
             }
         )
+    }
+
+    #[test]
+    fn test_receive_send() {
+        let mut deps = mock_dependencies();
+
+        let msg = InstantiateMsg {
+            admin: None,
+            cw20_addr: String::from("cw20"),
+        };
+        let mut info = mock_info("creator", &[]);
+
+        let _res = instantiate(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+
+        // should create pot
+        let msg = ExecuteMsg::CreatePot {
+            target_addr: String::from("some"),
+            threshold: Uint128::new(100),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        assert_eq!(0, res.messages.len());
+
+        let msg = ExecuteMsg::Receive(cw20::Cw20ReceiveMsg {
+            sender: String::from("cw20"),
+            amount: Uint128::new(55),
+            msg: to_binary(&ReceiveMsg::Send { id: Uint64::new(1) }).unwrap(),
+        });
+        info.sender = Addr::unchecked("cw20");
+        let _res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+
+        // query pot
+        let msg = QueryMsg::GetPot { id: Uint64::new(1) };
+        let res = query(deps.as_ref(), mock_env(), msg).unwrap();
+
+        let pot: Pot = from_binary(&res).unwrap();
+        assert_eq!(
+            pot,
+            Pot {
+                target_addr: Addr::unchecked("some"),
+                collected: Uint128::new(55),
+                threshold: Uint128::new(100),
+            }
+        );
+
+        let msg = ExecuteMsg::Receive(cw20::Cw20ReceiveMsg {
+            sender: String::from("cw20"),
+            amount: Uint128::new(55),
+            msg: to_binary(&ReceiveMsg::Send { id: Uint64::new(1) }).unwrap(),
+        });
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        let msg = res.messages[0].clone().msg;
+        assert_eq!(
+            msg,
+            CosmosMsg::Wasm(cosmwasm_std::WasmMsg::Execute {
+                contract_addr: String::from("cw20"),
+                msg: to_binary(&Cw20ExecuteMsg::Transfer {
+                    recipient: String::from("some"),
+                    amount: Uint128::new(110),
+                })
+                .unwrap(),
+                funds: vec![]
+            })
+        );
+
+        // query pot
+        let msg = QueryMsg::GetPot { id: Uint64::new(1) };
+        let res = query(deps.as_ref(), mock_env(), msg).unwrap();
+
+        let pot: Pot = from_binary(&res).unwrap();
+        assert_eq!(
+            pot,
+            Pot {
+                target_addr: Addr::unchecked("some"),
+                collected: Uint128::new(110),
+                threshold: Uint128::new(100),
+            }
+        );
     }
 }
