@@ -1,6 +1,7 @@
-# COSMWASM contracts
+# BitTorrent Client
 
 ## Overview
-1. 
-2. 
-3. 
+Inspired by Codecrafters. 
+
+## Resources
+- [spec](https://www.bittorrent.org/beps/bep_0003.html)
