@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
+use bittorrent_cli::torrent::{Keys, Torrent};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -13,6 +14,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Decode { value: String },
+    Info { torrent: PathBuf },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -22,6 +24,19 @@ fn main() -> anyhow::Result<()> {
         Commands::Decode { value } => {
             let decoded: String = serde_bencode::from_str(&value).context("decode value")?;
             println!("{decoded}");
+        }
+        Commands::Info { torrent } => {
+            let t_bytes = std::fs::read(torrent).context("read torrent file")?;
+            let t: Torrent = serde_bencode::from_bytes(&t_bytes).context("parse torrent file")?;
+
+            println!("Tracker URL: {}", t.announce);
+
+            let file_length = match t.info.keys {
+                Keys::SingleFile { length } => length,
+                Keys::MultiFile { files } => files.iter().map(|file| file.length).sum(),
+            };
+
+            println!("Length: {}", file_length);
         }
     }
 
