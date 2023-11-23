@@ -29,14 +29,16 @@ fn main() -> anyhow::Result<()> {
             let t_bytes = std::fs::read(torrent).context("read torrent file")?;
             let t: Torrent = serde_bencode::from_bytes(&t_bytes).context("parse torrent file")?;
 
-            println!("Tracker URL: {}", t.announce);
-
             let file_length = match t.info.keys {
                 Keys::SingleFile { length } => length,
-                Keys::MultiFile { files } => files.iter().map(|file| file.length).sum(),
+                Keys::MultiFile { ref files } => files.iter().map(|file| file.length).sum(),
             };
 
+            println!("Tracker URL: {}", t.announce);
             println!("Length: {}", file_length);
+
+            let info_hash = t.info_hash();
+            println!("Info Hash: {}", hex::encode(info_hash));
         }
     }
 

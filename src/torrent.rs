@@ -4,6 +4,7 @@ use serde::{
     de::{self, Visitor},
     Deserialize, Deserializer, Serialize, Serializer,
 };
+use sha1::{Digest, Sha1};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Torrent {
@@ -13,21 +14,30 @@ pub struct Torrent {
     pub info: Info,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+impl Torrent {
+    pub fn info_hash(&self) -> [u8; 20] {
+        let info_bytes = serde_bencode::to_bytes(&self.info).expect("parse into bytes");
+        let mut hasher = Sha1::new();
+        hasher.update(&info_bytes);
+        hasher.finalize().try_into().expect("")
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Info {
-    /// The `name` key maps to a UTF-8 encoded string which is the suggested name 
+    /// The `name` key maps to a UTF-8 encoded string which is the suggested name
     /// to save the file (or directory) as.
     pub name: String,
 
     /// `piece length` maps to the number of bytes in each piece the file is split into.
     ///
-    /// For the purposes of transfer, files are split into fixed-size pieces 
+    /// For the purposes of transfer, files are split into fixed-size pieces
     /// which are all the same length except for possibly the last one which may be truncated.
     #[serde(rename = "piece length")]
     pub plength: usize,
 
-    /// `pieces` maps to a string whose length is a multiple of 20. 
-    /// It is to be subdivided into strings of length 20, 
+    /// `pieces` maps to a string whose length is a multiple of 20.
+    /// It is to be subdivided into strings of length 20,
     /// each of which is the SHA1 hash of the piece at the corresponding index.
     pub pieces: Hashes,
 
@@ -36,14 +46,14 @@ pub struct Info {
     pub keys: Keys,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum Keys {
     SingleFile { length: usize },
     MultiFile { files: Vec<File> },
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct File {
     pub length: usize,
     pub path: Vec<String>,
