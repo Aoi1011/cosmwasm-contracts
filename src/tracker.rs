@@ -74,7 +74,7 @@ impl Response {
     pub fn new() -> Self {
         Self {
             interval: 0,
-            peers: Peers (Vec::new()),
+            peers: Peers(Vec::new()),
         }
     }
 }
