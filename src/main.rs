@@ -1,12 +1,12 @@
-use std::path::PathBuf;
+use std::{net::UdpSocket, path::PathBuf, time::Duration};
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use bittorrent_cli::{
     torrent::{Keys, Torrent},
-    tracker, udp,
+    tracker,
 };
 use clap::{Parser, Subcommand};
-use tokio::net::UdpSocket;
+// use tokio::net::UdpSocket;
 
 const MAX_PACKET_SIZE: usize = 1496;
 
@@ -76,24 +76,48 @@ async fn main() -> anyhow::Result<()> {
             let request = tracker::Request::new(&info_hash, file_length);
 
             if udp {
-                let socket = UdpSocket::bind("0.0.0.0:0").await?;
-                socket.connect("tracker.opentracker.org:1337").await?;
+                let socket = UdpSocket::bind("0.0.0.0:0").context("")?;
+                socket
+                    .connect("tracker-udp.gbitt.info:80")
+                    .context("connect to tracker")?;
 
-                const CONNECT_ACTION: i32 = 0;
-                const TRANSACTION_ID: i32 = 0;
+                const CONNECT_ACTION: u32 = 0;
+                let transaction_id: u32 = rand::random();
 
                 let mut connect_request = [0u8; 16];
-                let protocol_id: i64 = 0x41727101980; // Magic constant
-                let action: i32 = CONNECT_ACTION; // Action for connect is 0
-                let transaction_id: i32 = TRANSACTION_ID;
+                let protocol_id: u64 = 0x0417_2710_1980; // Magic constant
+                let action: u32 = CONNECT_ACTION; // Action for connect is 0
+                let transaction_id: u32 = transaction_id;
 
                 // Packing the connect request buffer
                 connect_request[..8].copy_from_slice(&protocol_id.to_be_bytes());
                 connect_request[8..12].copy_from_slice(&action.to_be_bytes());
                 connect_request[12..].copy_from_slice(&transaction_id.to_be_bytes());
 
-                // Send the connect request
-                socket.send(&connect_request).await?;
+                let mut attempts = 0;
+                let max_retries = 8;
+                let mut delay = 15;
+                loop {
+                    eprintln!("attempting to send request: {}", attempts);
+
+                    if attempts > max_retries {
+                        // return Err(io::Error::new(io::ErrorKind::Other, "max retransmission reached"));
+                        return Err(anyhow!("max retransmission reached"));
+                    }
+                    // Send the connect request
+                    match socket.send_to(&connect_request, "tracker-udp.gbitt.info:80") {
+                        Ok(_) => break,
+                        Err(e) => {
+                            println!("attempt {}: Failed to send request, error: {}", attempts, e);
+                        }
+                    }
+
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+
+                    attempts += 1;
+
+                    delay *= 2;
+                }
 
                 // Buffer to receive the response
                 let mut response = [0u8; 16];
@@ -102,12 +126,12 @@ async fn main() -> anyhow::Result<()> {
                 // socket.set(Some(Duration::from_secs(5)))?;
 
                 // Receive the response
-                match socket.recv(&mut response).await {
+                match socket.recv(&mut response) {
                     Ok(_) => {
                         // Extract the action and transaction_id from the response
                         let action = i32::from_be_bytes(response[0..4].try_into().unwrap());
                         let res_transaction_id =
-                            i32::from_be_bytes(response[4..8].try_into().unwrap());
+                            u32::from_be_bytes(response[4..8].try_into().unwrap());
 
                         // Check if the transaction_id matches
                         if res_transaction_id != transaction_id {
