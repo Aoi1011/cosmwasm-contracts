@@ -1,4 +1,4 @@
-use std::{net::UdpSocket, path::PathBuf, time::Duration};
+use std::{io::Cursor, path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, Context};
 use bittorrent_cli::{
@@ -6,8 +6,7 @@ use bittorrent_cli::{
     tracker::{self, udp::TransactionId},
 };
 use clap::{Parser, Subcommand};
-use tokio::net::unix::SocketAddr;
-// use tokio::net::UdpSocket;
+use tokio::net::UdpSocket;
 
 const MAX_PACKET_SIZE: usize = 1496;
 
@@ -77,25 +76,21 @@ async fn main() -> anyhow::Result<()> {
 
             match addr {
                 bittorrent_cli::tracker::Addr::Udp(url) => {
-                    let socket = UdpSocket::bind("0.0.0.0:0").context("")?;
-                    socket.connect(url).context("connect to tracker")?;
+                    let socket = UdpSocket::bind("0.0.0.0:0")
+                        .await
+                        .context("bind to the address")?;
+                    socket.connect(url).await.context("connect to tracker")?;
 
                     const CONNECT_ACTION: u32 = 0;
                     let transaction_id: u32 = rand::random();
 
                     let mut connect_buffer = Vec::new();
-                    // let protocol_id: u64 = 0x0417_2710_1980; // Magic constant
-                    // let action: u32 = CONNECT_ACTION; // Action for connect is 0
                     let transaction_id: u32 = transaction_id;
                     let connect_req = tracker::udp::ConnectRequest {
                         transaction_id: TransactionId(transaction_id),
                     };
                     let request = tracker::udp::Request::from(connect_req);
 
-                    // Packing the connect request buffer
-                    // connect_request[..8].copy_from_slice(&protocol_id.to_be_bytes());
-                    // connect_request[8..12].copy_from_slice(&action.to_be_bytes());
-                    // connect_request[12..].copy_from_slice(&transaction_id.to_be_bytes());
                     request.write(&mut connect_buffer)?;
 
                     let mut attempts = 0;
@@ -105,11 +100,10 @@ async fn main() -> anyhow::Result<()> {
                         eprintln!("attempting to send request: {}", attempts);
 
                         if attempts > max_retries {
-                            // return Err(io::Error::new(io::ErrorKind::Other, "max retransmission reached"));
                             return Err(anyhow!("max retransmission reached"));
                         }
                         // Send the connect request
-                        match socket.send_to(&connect_buffer, &url) {
+                        match socket.send_to(&connect_buffer, &url).await {
                             Ok(_) => break,
                             Err(e) => {
                                 println!(
@@ -129,31 +123,22 @@ async fn main() -> anyhow::Result<()> {
                     // Buffer to receive the response
                     let mut response = [0u8; 16];
 
-                    // Set a timeout for the response
-                    // socket.set(Some(Duration::from_secs(5)))?;
-
                     // Receive the response
-                    match socket.recv(&mut response) {
+                    match socket.recv(&mut response).await {
                         Ok(_) => {
-                            // Extract the action and transaction_id from the response
-                            let action = i32::from_be_bytes(response[0..4].try_into().unwrap());
-                            let res_transaction_id =
-                                u32::from_be_bytes(response[4..8].try_into().unwrap());
+                            let res = tracker::udp::Response::read(&mut response)
+                                .context("read response")?;
 
                             // Check if the transaction_id matches
-                            if res_transaction_id != transaction_id {
-                                println!("Transaction ID does not match");
-                                return Ok(());
-                            }
+                            match res {
+                                tracker::udp::Response::Connect(connect_res) => {
+                                    assert_eq!(connect_res.transaction_id.0, transaction_id);
 
-                            if action == 0 {
-                                // Success, extract connection_id
-                                let connection_id =
-                                    i64::from_be_bytes(response[8..16].try_into().unwrap());
-                                println!("Received connection ID: {}", connection_id);
-                            } else {
-                                // Error or unknown action
-                                println!("Received unknown action: {}", action);
+                                    println!(
+                                        "Received connection ID: {}",
+                                        connect_res.connection_id.0
+                                    );
+                                }
                             }
                         }
                         Err(e) => {

@@ -53,6 +53,27 @@ pub enum Response {
 }
 
 impl Response {
+    pub fn read(bytes: &[u8]) -> Result<Self, io::Error> {
+        // let action = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let action = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
+
+        match action {
+            // Connect
+            0 => {
+                let connection_id =
+                    ConnectionId(u64::from_be_bytes(bytes[8..16].try_into().unwrap()));
+                let transaction_id =
+                    TransactionId(u32::from_be_bytes(bytes[4..8].try_into().unwrap()));
+
+                Ok(Self::Connect(ConnectResponse {
+                    connection_id,
+                    transaction_id,
+                }))
+            }
+            op => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{op}"))),
+        }
+    }
+
     pub fn write(&self, bytes: &mut impl Write) -> Result<(), io::Error> {
         match self {
             Response::Connect(r) => {
