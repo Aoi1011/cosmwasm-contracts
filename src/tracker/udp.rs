@@ -31,7 +31,7 @@ impl ConnectRequest {
         Self {
             protocol_id: PROTOCOL_IDENTIFIER,
             action: 0,
-            transaction_id: TransactionId(transaction_id), 
+            transaction_id: TransactionId(transaction_id),
         }
     }
 }
@@ -67,6 +67,25 @@ pub struct AnnounceRequest {
     pub port: u16,
 }
 
+impl AnnounceRequest {
+    pub fn new(connection_id: u64, transaction_id: u32, info_hash: [u8; 20]) -> Self {
+        Self {
+            connection_id: ConnectionId(connection_id),
+            transaction_id: TransactionId(transaction_id),
+            info_hash,
+            peer_id: *b"00112233445566778899",
+            downloaded: 0,
+            left: 0,
+            uploaded: 0,
+            event: 0,
+            ip_address: 0,
+            key: 0,
+            num_want: -1,
+            port: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     Connect(ConnectRequest),
@@ -76,6 +95,12 @@ pub enum Request {
 impl From<ConnectRequest> for Request {
     fn from(value: ConnectRequest) -> Self {
         Self::Connect(value)
+    }
+}
+
+impl From<AnnounceRequest> for Request {
+    fn from(value: AnnounceRequest) -> Self {
+        Self::Announce(value)
     }
 }
 

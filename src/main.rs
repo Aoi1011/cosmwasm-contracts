@@ -72,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
             let info_hash = t.info_hash();
             let request = tracker::http::Request::new(&info_hash, file_length);
 
-            let addr = bittorrent_cli::tracker::get_addr(t.announce)?;
+            let addr = bittorrent_cli::tracker::get_addr(&t.announce)?;
 
             match addr {
                 bittorrent_cli::tracker::Addr::Udp(url) => {
@@ -88,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
 
                     'transmit: loop {
                         match action {
+                            // Connect
                             0 => {
                                 let mut connect_buffer = Vec::new();
                                 transaction_id = rand::random::<u32>();
@@ -122,12 +123,18 @@ async fn main() -> anyhow::Result<()> {
                                     delay *= 2;
                                 }
                             }
+
+                            // Announce
                             1 => {
-                                let mut connect_buffer = Vec::new();
+                                let mut announce_buffer = Vec::new();
                                 transaction_id = rand::random::<u32>();
-                                let connect_req = tracker::udp::ConnectRequest::new(transaction_id);
-                                let request = tracker::udp::Request::from(connect_req);
-                                request.write(&mut connect_buffer)?;
+                                let announce_req = tracker::udp::AnnounceRequest::new(
+                                    connection_id,
+                                    transaction_id,
+                                    t.info_hash(),
+                                );
+                                let request = tracker::udp::Request::from(announce_req);
+                                request.write(&mut announce_buffer)?;
 
                                 let mut attempts = 0;
                                 let max_retries = 8;
@@ -139,7 +146,7 @@ async fn main() -> anyhow::Result<()> {
                                         return Err(anyhow!("max retransmission reached"));
                                     }
                                     // Send the connect request
-                                    match socket.send_to(&connect_buffer, &url).await {
+                                    match socket.send_to(&announce_buffer, &url).await {
                                         Ok(_) => break,
                                         Err(e) => {
                                             println!(
@@ -154,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
                                     attempts += 1;
 
                                     delay *= 2;
-                                break 'transmit;
+                                }
                             }
                             _ => {}
                         }
@@ -181,7 +188,19 @@ async fn main() -> anyhow::Result<()> {
                                         action = 1;
                                         connection_id = connect_res.connection_id.0;
                                     }
-                                    tracker::udp::Response::Announce(announce_res) => {}
+                                    tracker::udp::Response::Announce(announce_res) => {
+                                        assert_eq!(announce_res.transaction_id.0, transaction_id);
+
+                                        // action = 1;
+                                        // connection_id = announce_res.connection_id.0;
+
+                                        eprintln!("Peers");
+                                        for (idx, peer) in announce_res.peers.iter().enumerate() {
+                                            eprintln!("Peer {idx}: {peer}");
+                                        }
+
+                                        break 'transmit;
+                                    }
                                 }
                             }
                             Err(e) => {

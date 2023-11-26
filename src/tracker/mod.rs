@@ -5,12 +5,15 @@ use anyhow::{anyhow, Context};
 pub mod http;
 pub mod udp;
 
+pub struct Tracker {
+}
+
 pub enum Addr {
     Udp(SocketAddr),
     Http(SocketAddr),
 }
 
-pub fn get_addr(announce: String) -> anyhow::Result<Addr> {
+pub fn get_addr(announce: &str) -> anyhow::Result<Addr> {
     if let Some((protocol, addr)) = announce.split_once("://") {
         match protocol {
             "http" => Ok(Addr::Http(
@@ -38,5 +41,3 @@ pub fn get_addr(announce: String) -> anyhow::Result<Addr> {
         Err(anyhow!("cannot find announce"))
     }
 }
-
-
