@@ -1,12 +1,12 @@
-use std::{io::Cursor, path::PathBuf, time::Duration};
+use std::{net::SocketAddrV4, path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, Context};
 use bittorrent_cli::{
     torrent::{Keys, Torrent},
-    tracker::{self, udp::TransactionId},
+    tracker,
 };
 use clap::{Parser, Subcommand};
-use tokio::net::UdpSocket;
+use tokio::net::{TcpStream, UdpSocket};
 
 const MAX_PACKET_SIZE: usize = 1496;
 
@@ -28,6 +28,10 @@ enum Commands {
     Peers {
         #[arg(long, short)]
         torrent: PathBuf,
+    },
+    Handshake {
+        torrent: PathBuf,
+        addr: SocketAddrV4,
     },
 }
 
@@ -219,6 +223,30 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
             }
+        }
+        Commands::Handshake { torrent, addr } => {
+            let t = Torrent::new(torrent)?;
+            let info_hash = t.info_hash();
+
+            let mut stream = TcpStream::connect(addr).await?;
+
+            let handshake = Handshake::new(info_hash);
+            let mut handshake_bytes = handshake.bytes();
+            stream.write_all(&mut handshake_bytes).await?;
+
+            let mut buffer = [0; 68];
+            let mut total_read = 0;
+            while total_read < buffer.len() {
+                let read = stream.read(&mut buffer[total_read..]).await?;
+                if read == 0 {
+                    return Err(anyhow!("Connection closed by peer"));
+                }
+                total_read += read;
+            }
+
+            let handshake_res = Handshake::from_bytes(&buffer);
+
+            println!("Peer ID: {}", hex::encode(handshake_res.peer_id));
         }
     }
 

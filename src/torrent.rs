@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
 use serde::{
     de::{self, Visitor},
@@ -15,6 +15,13 @@ pub struct Torrent {
 }
 
 impl Torrent {
+    pub fn new(torrent: PathBuf) -> anyhow::Result<Self> {
+        let bytes = std::fs::read(torrent)?;
+        let torrent: Torrent = serde_bencode::from_bytes(&bytes)?;
+
+        Ok(torrent)
+    }
+
     pub fn info_hash(&self) -> [u8; 20] {
         let info_bytes = serde_bencode::to_bytes(&self.info).expect("parse into bytes");
         let mut hasher = Sha1::new();
