@@ -28,6 +28,13 @@ impl Torrent {
         hasher.update(&info_bytes);
         hasher.finalize().try_into().expect("")
     }
+
+    pub fn length(&self) -> usize {
+        match &self.info.keys {
+            Keys::SingleFile { length } => *length,
+            Keys::MultiFile { files } => files.iter().map(|file| file.length).sum(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
