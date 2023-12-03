@@ -13,6 +13,7 @@ use tokio::{
     net::{TcpStream, UdpSocket},
 };
 
+const BLOCK_SIZE: u32 = 1 << 14;
 const MAX_PACKET_SIZE: usize = 1496;
 
 #[derive(Parser)]
