@@ -1,6 +1,6 @@
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-const BLOCK_SIZE: u32 = 1 << 14;
+pub(crate) const BLOCK_SIZE: u32 = 1 << 14;
 
 #[derive(Debug, Clone)]
 pub struct Request {

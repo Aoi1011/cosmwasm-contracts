@@ -1,9 +1,9 @@
-use std::{io, net::SocketAddrV4, path::PathBuf, time::Duration};
+use std::{io, net::SocketAddrV4, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Context};
 use bittorrent_cli::{
     block,
-    peer::{Handshake, Message, MessageId},
+    peer::{Handshake, Message, MessageId, Peer},
     torrent::{Keys, Torrent},
     tracker,
 };
@@ -357,13 +357,13 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Download { output, torrent } => {
             let t = Torrent::new(torrent)?;
-            let info_hash = t.info_hash()?;
-            let req = tracker::Request::new(&info_hash, t.length());
+            let info_hash = t.info_hash();
+            let req = tracker::http::Request::new(&info_hash, t.length());
             let url = req.url(&t.announce);
 
             let res = reqwest::get(url).await?;
             let res_bytes = res.bytes().await?;
-            let tracker_res: tracker::Response = serde_bencode::from_bytes(&res_bytes)?;
+            let tracker_res: tracker::http::Response = serde_bencode::from_bytes(&res_bytes)?;
 
             let shared_state = Arc::new(SharedState::new(t.info.pieces.0.len()));
 

@@ -1,5 +1,12 @@
+use std::{io, net::SocketAddrV4};
+
 use anyhow::Context;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    net::TcpStream,
+};
+
+use crate::block::{self, BLOCK_SIZE};
 
 #[derive(Debug, Clone)]
 pub struct Handshake {
@@ -8,6 +15,85 @@ pub struct Handshake {
     pub reserved: Vec<u8>,
     pub info_hash: Vec<u8>,
     pub peer_id: Vec<u8>,
+}
+
+pub struct Peer {
+    addr: SocketAddrV4,
+    stream: TcpStream,
+}
+
+impl Peer {
+    pub async fn new(addr: SocketAddrV4, info_hash: &[u8; 20]) -> anyhow::Result<Self> {
+        let mut stream = TcpStream::connect(addr).await.context("connect to peer")?;
+
+        let handshake = Handshake::new(info_hash);
+        {
+            let mut handshake_bytes = handshake.bytes();
+            stream.write_all(&mut handshake_bytes).await?;
+
+            stream.read_exact(&mut handshake_bytes).await?;
+        }
+
+        anyhow::ensure!(handshake.length == 19);
+        anyhow::ensure!(handshake.protocol == *b"BitTorrent protocol");
+
+        Ok(Self { addr, stream })
+    }
+
+    pub(crate) async fn download_piece(
+        &mut self,
+        file_length: u32,
+        npiece: u32,
+        plength: u32,
+    ) -> anyhow::Result<Vec<u8>> {
+        eprintln!("start downloading piece: {npiece}, piece length: {plength}");
+        // let mut buffer = [0; 68];
+        // let mut total_read = 0;
+        // while total_read < buffer.len() {
+        //     let read = self.stream.read(&mut buffer[total_read..]).await?;
+        //     if read == 0 {
+        //         return Err(anyhow!("Connection closed by peer"));
+        //     }
+        //     total_read += read;
+        // }
+        // eprintln!("Total read: {total_read}");
+
+        // let _handshake_res = Handshake::from_bytes(&buffer);
+
+        let bitfield = Message::decode(&mut self.stream).await?;
+        anyhow::ensure!(bitfield.id == MessageId::Bitfield);
+        eprintln!("Received bitfield");
+
+        Message::encode(&mut self.stream, MessageId::Interested, &mut []).await?;
+
+        let unchoke = Message::decode(&mut self.stream).await?;
+        anyhow::ensure!(unchoke.id == MessageId::Unchoke);
+        eprintln!("Received unchoke");
+
+        let mut all_pieces: Vec<u8> = Vec::new();
+        let piece_length = plength.min(file_length - plength * npiece);
+        let total_blocks = if piece_length % BLOCK_SIZE == 0 {
+            piece_length / BLOCK_SIZE
+        } else {
+            (piece_length / BLOCK_SIZE) + 1
+        };
+
+        for nblock in 0..total_blocks {
+            let block_req = block::Request::new(npiece as u32, nblock, piece_length);
+            let mut block_payload = block_req.encode();
+
+            Message::encode(&mut self.stream, MessageId::Request, &mut block_payload).await?;
+
+            let piece = Message::decode(&mut self.stream).await?;
+            let payload_len = piece.payload.len();
+            let mut payload = io::Cursor::new(piece.payload);
+
+            let block_res = block::Response::new(&mut payload, payload_len).await?;
+            all_pieces.extend(block_res.block());
+        }
+
+        Ok(all_pieces)
+    }
 }
 
 impl Handshake {
