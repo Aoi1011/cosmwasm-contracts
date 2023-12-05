@@ -357,65 +357,38 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Download { output, torrent } => {
             let t = Torrent::new(torrent)?;
-            let info_hash = t.info_hash();
-            let req = tracker::http::Request::new(&info_hash, t.length());
+            let info_hash = t.info_hash()?;
+            let req = tracker::Request::new(&info_hash, t.length());
             let url = req.url(&t.announce);
 
             let res = reqwest::get(url).await?;
             let res_bytes = res.bytes().await?;
-            let tracker_res: tracker::http::Response = serde_bencode::from_bytes(&res_bytes)?;
+            let tracker_res: tracker::Response = serde_bencode::from_bytes(&res_bytes)?;
 
-            let addr = tracker_res.peers.0[0];
-            let mut stream = TcpStream::connect(addr).await?;
+            let shared_state = Arc::new(SharedState::new(t.info.pieces.0.len()));
 
-            let handshake = Handshake::new(&info_hash);
-            let mut handshake_bytes = handshake.bytes();
-            stream.write_all(&mut handshake_bytes).await?;
+            let futures = tracker_res
+                .peers
+                .0
+                .into_iter()
+                .map(|addr| {
+                    let info_hash = info_hash.clone();
+                    async move { Peer::new(addr, &info_hash).await }
+                })
+                .collect::<Vec<_>>();
 
-            let mut buffer = [0; 68];
-            let mut total_read = 0;
-            while total_read < buffer.len() {
-                let read = stream.read(&mut buffer[total_read..]).await?;
-                if read == 0 {
-                    return Err(anyhow!("Connection closed by peer"));
-                }
-                total_read += read;
-            }
-
-            let _handshake_res = Handshake::from_bytes(&buffer);
-
-            let _bitfield = Message::decode(&mut stream).await?;
-
-            Message::encode(&mut stream, MessageId::Interested, &mut []).await?;
-
-            let _unchoke = Message::decode(&mut stream).await?;
-
-            let mut all_pieces = Vec::new();
-            let plength = t.info.plength as u32;
-            for npiece in 0..t.info.pieces.0.len() {
-                let piece_length = plength.min(t.length() as u32 - plength * npiece as u32);
-                let total_blocks = if piece_length % BLOCK_SIZE == 0 {
-                    piece_length / BLOCK_SIZE
-                } else {
-                    (piece_length / BLOCK_SIZE) + 1
+            let results = join_all(futures).await;
+            for result in results {
+                match result {
+                    Ok(mut connection) => {
+                        let piece =
+                            download_worker(&t, shared_state.clone(), &mut connection).await;
+                    }
+                    Err(e) => eprintln!("Error: {}", e),
                 };
-
-                let _ = tokio::fs::remove_file(&output).await;
-
-                for nblock in 0..total_blocks {
-                    let block_req = block::Request::new(npiece as u32, nblock, piece_length);
-                    let mut block_payload = block_req.encode();
-
-                    Message::encode(&mut stream, MessageId::Request, &mut block_payload).await?;
-
-                    let piece = Message::decode(&mut stream).await?;
-                    let payload_len = piece.payload.len();
-                    let mut payload = io::Cursor::new(piece.payload);
-
-                    let block_res = block::Response::new(&mut payload, payload_len).await?;
-                    all_pieces.extend(block_res.block());
-                }
             }
+
+            let all_pieces = shared_state.all_pieces();
             let mut output_file = tokio::fs::File::options()
                 .write(true)
                 .create(true)
