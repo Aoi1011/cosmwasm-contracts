@@ -7,6 +7,8 @@ use serde::{
 };
 use sha1::{Digest, Sha1};
 
+use crate::download::{self, Downloaded};
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Torrent {
     /// The URL of the tracker
@@ -44,14 +46,17 @@ impl Torrent {
         match &self.info.keys {
             Keys::SingleFile { .. } => {
                 eprintln!("{}", self.info.name);
-             }
+            }
             Keys::MultiFile { files } => {
                 for file in files {
-                eprintln!("{:?}", file.path.join(std::path::MAIN_SEPARATOR_STR));
+                    eprintln!("{:?}", file.path.join(std::path::MAIN_SEPARATOR_STR));
                 }
             }
         }
+    }
 
+    pub async fn donwload_all(&self) -> anyhow::Result<Downloaded> {
+        download::all(self).await
     }
 }
 
