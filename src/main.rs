@@ -356,7 +356,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Download { output, torrent } => {
-            let t = Torrent::new(torrent)?;
+            let t = Torrent::read(torrent).await?;
             let info_hash = t.info_hash();
             let req = tracker::http::Request::new(&info_hash, t.length());
             let url = req.url(&t.announce);
