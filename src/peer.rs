@@ -37,6 +37,10 @@ impl Peer {
         anyhow::ensure!(handshake.length == 19);
         anyhow::ensure!(handshake.protocol == *b"BitTorrent protocol");
 
+        let bitfield = Message::decode(&mut stream).await?;
+        anyhow::ensure!(bitfield.id == MessageId::Bitfield);
+        eprintln!("Received bitfield");
+
         Ok(Self { addr, stream })
     }
 
@@ -59,10 +63,6 @@ impl Peer {
         // eprintln!("Total read: {total_read}");
 
         // let _handshake_res = Handshake::from_bytes(&buffer);
-
-        let bitfield = Message::decode(&mut self.stream).await?;
-        anyhow::ensure!(bitfield.id == MessageId::Bitfield);
-        eprintln!("Received bitfield");
 
         Message::encode(&mut self.stream, MessageId::Interested, &mut []).await?;
 

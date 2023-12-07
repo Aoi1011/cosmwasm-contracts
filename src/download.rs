@@ -51,7 +51,7 @@ pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
     })
 }
 
-pub async fn download_piece_block_from(
+pub async fn download_piece(
     candidate_peers: &[SocketAddrV4],
     piece_hash: [u8; 20],
     piece_size: usize,
