@@ -1,9 +1,9 @@
-use std::{io, net::SocketAddrV4, path::PathBuf, sync::Arc, time::Duration};
+use std::{io, net::SocketAddrV4, path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, Context};
 use bittorrent_cli::{
-    block,
-    peer::{Handshake, Message, MessageId, Peer},
+    block, download,
+    peer::{Handshake, Message, MessageId},
     torrent::{Keys, Torrent},
     tracker,
 };
@@ -12,9 +12,6 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpStream, UdpSocket},
 };
-
-const BLOCK_SIZE: u32 = 1 << 14;
-const MAX_PACKET_SIZE: usize = 1496;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -103,7 +100,6 @@ async fn main() -> anyhow::Result<()> {
                         .context("bind to the address")?;
                     socket.connect(url).await.context("connect to tracker")?;
 
-                    const CONNECT_ACTION: u32 = 0;
                     let mut action = 0;
                     let mut transaction_id = 0;
                     let mut connection_id: u64 = 0;
@@ -243,7 +239,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Handshake { torrent, addr } => {
-            let t = Torrent::new(torrent)?;
+            let t = Torrent::read(torrent).await?;
             let info_hash = t.info_hash();
 
             let mut stream = TcpStream::connect(addr).await?;
@@ -271,7 +267,7 @@ async fn main() -> anyhow::Result<()> {
             torrent,
             piece_index,
         } => {
-            let t = Torrent::new(torrent)?;
+            let t = Torrent::read(torrent).await?;
             let info_hash = t.info_hash();
             let request = tracker::http::Request::new(&info_hash, t.length());
 
@@ -357,6 +353,13 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Download { output, torrent } => {
             let t = Torrent::read(torrent).await?;
+
+            let files = download::all(&t).await?;
+            tokio::fs::write(
+                &output,
+                files.into_iter().next().expect("always one file").bytes(),
+            )
+            .await?;
 
             println!("Downloaded test.torrent to {}.", output.display());
         }

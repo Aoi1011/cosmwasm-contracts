@@ -20,6 +20,8 @@ pub struct Handshake {
 pub struct Peer {
     addr: SocketAddrV4,
     stream: TcpStream,
+    bitfield: Bitfield,
+    choked: bool,
 }
 
 impl Peer {
@@ -41,7 +43,12 @@ impl Peer {
         anyhow::ensure!(bitfield.id == MessageId::Bitfield);
         eprintln!("Received bitfield");
 
-        Ok(Self { addr, stream })
+        Ok(Self {
+            addr,
+            stream,
+            bitfield: Bitfield::from_payload(bitfield.payload),
+            choked: true,
+        })
     }
 
     pub(crate) async fn download_piece(
@@ -93,6 +100,41 @@ impl Peer {
         }
 
         Ok(all_pieces)
+    }
+
+    pub(crate) fn has_piece(&self, piece_i: usize) -> bool {
+        self.bitfield.has_piece(piece_i)
+    }
+}
+
+pub struct Bitfield {
+    payload: Vec<u8>,
+}
+
+impl Bitfield {
+    pub(crate) fn has_piece(&self, piece_i: usize) -> bool {
+        let byte_i = piece_i / 8;
+        let bit_i = (piece_i % 8) as u32;
+
+        let Some(&byte) = self.payload.get(byte_i) else {
+            return false;
+        };
+
+        byte & (1u8.rotate_right(bit_i + 1)) != 0
+    }
+
+    pub(crate) fn pieces(&self) -> impl Iterator<Item = usize> + '_ {
+        self.payload.iter().enumerate().flat_map(|(byte_i, &byte)| {
+            (0..u8::BITS).filter_map(move |bit_i| {
+                let piece_i = byte_i * (u8::BITS as usize) + (bit_i as usize);
+                let mask = 1_u8.rotate_right(bit_i + 1);
+                (byte & mask != 0).then_some(piece_i)
+            })
+        })
+    }
+
+    pub(crate) fn from_payload(payload: Vec<u8>) -> Self {
+        Self { payload }
     }
 }
 

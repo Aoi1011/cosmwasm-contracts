@@ -1,6 +1,11 @@
-use std::net::SocketAddrV4;
+use std::{collections::BinaryHeap, net::SocketAddrV4};
+
+use futures_util::StreamExt;
 
 use crate::{
+    block::BLOCK_SIZE,
+    peer::Peer,
+    piece::Piece,
     torrent::{File, Torrent},
     tracker,
 };
@@ -14,29 +19,62 @@ pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
     let res_bytes = res.bytes().await?;
     let tracker_res: tracker::http::Response = serde_bencode::from_bytes(&res_bytes)?;
 
-    let shared_state = Arc::new(SharedState::new(t.info.pieces.0.len()));
-
-    let futures = tracker_res
-        .peers
-        .0
-        .into_iter()
-        .map(|addr| {
-            let info_hash = info_hash.clone();
-            async move { Peer::new(addr, &info_hash).await }
+    let mut peers = futures_util::stream::iter(tracker_res.peers.0)
+        .map(|peer_addr| async move {
+            let peer = Peer::new(peer_addr, &info_hash).await;
+            (peer_addr, peer)
         })
-        .collect::<Vec<_>>();
+        .buffer_unordered(5);
 
-    let results = join_all(futures).await;
-    for result in results {
-        match result {
-            Ok(mut connection) => {
-                let piece = download_worker(&t, shared_state.clone(), &mut connection).await;
+    let mut peer_list = Vec::new();
+    while let Some((peer_addr, peer)) = peers.next().await {
+        match peer {
+            Ok(peer) => {
+                peer_list.push(peer);
+
+                if peer_list.len() > 5 {
+                    break;
+                }
             }
-            Err(e) => eprintln!("Error: {}", e),
-        };
+            Err(e) => {
+                eprintln!("connect to peer {peer_addr:?}: {e}");
+            }
+        }
+    }
+    drop(peers);
+
+    let mut peers = peer_list;
+    let mut need_pieces = BinaryHeap::new();
+    let mut no_peers = Vec::new();
+
+    for piece_i in 0..t.info.pieces.0.len() {
+        let piece = Piece::new(piece_i, &t, &peers);
+        if piece.peers().is_empty() {
+            no_peers.push(piece);
+        } else {
+            need_pieces.push(piece);
+        }
     }
 
-    let all_pieces = shared_state.all_pieces();
+    assert!(no_peers.is_empty());
+
+    let all_pieces = vec![0; t.length()];
+    while let Some(piece) = need_pieces.pop() {
+        let plength = piece.length();
+        let npiece = piece.index();
+        let piece_length = plength.min(t.length() - plength * npiece);
+        let total_blocks = if piece_length % BLOCK_SIZE as usize == 0 {
+            piece_length / BLOCK_SIZE as usize
+        } else {
+            (piece_length / BLOCK_SIZE as usize) + 1
+        };
+
+        let peers: Vec<_> = peers
+            .iter_mut()
+            .filter_map(|(peer_i, peer)| piece.peers().contains(&peer_i).then_some(peer));
+
+        let (submit, tasks) = kanal
+    }
     let mut output_file = tokio::fs::File::options()
         .write(true)
         .create(true)
@@ -50,15 +88,6 @@ pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
         files: todo!(),
     })
 }
-
-pub async fn download_piece(
-    candidate_peers: &[SocketAddrV4],
-    piece_hash: [u8; 20],
-    piece_size: usize,
-) {
-}
-
-pub async fn download_block(peer: &SocketAddrV4, block: [u8; 20], block_size: usize) {}
 
 pub struct Downloaded {
     bytes: Vec<u8>,
