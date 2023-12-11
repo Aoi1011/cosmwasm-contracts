@@ -77,9 +77,6 @@ impl Response {
             peers: Peers(Vec::new()),
         }
     }
-
-    async fn query() -> anyhow::Result<Self> {
-    }
 }
 
 #[derive(Debug, Clone)]

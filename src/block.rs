@@ -62,6 +62,10 @@ impl Response {
         self.index
     }
 
+    pub fn begin(&self) -> u32 {
+        self.begin
+    }
+
     pub fn block(&self) -> &[u8] {
         &self.block
     }

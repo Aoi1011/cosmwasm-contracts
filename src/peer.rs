@@ -105,6 +105,78 @@ impl Peer {
     pub(crate) fn has_piece(&self, piece_i: usize) -> bool {
         self.bitfield.has_piece(piece_i)
     }
+
+    pub(crate) async fn participate(
+        &mut self,
+        npiece: u32,
+        nblocks: u32,
+        piece_length: u32,
+        submit: kanal::AsyncSender<usize>,
+        tasks: kanal::AsyncReceiver<usize>,
+        finish: tokio::sync::mpsc::Sender<block::Response>,
+    ) -> anyhow::Result<()> {
+        Message::encode(&mut self.stream, MessageId::Interested, &mut []).await?;
+
+        'task: loop {
+            while self.choked {
+                let unchoke = Message::decode(&mut self.stream).await?;
+                match unchoke.id {
+                    MessageId::Unchoke => {
+                        self.choked = false;
+                        anyhow::ensure!(unchoke.payload.is_empty());
+                        eprintln!("Received unchoke");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            let Ok(block) = tasks.recv().await else {
+                break;
+            };
+
+            let block_req = block::Request::new(npiece as u32, block as u32, piece_length);
+            let mut block_payload = block_req.encode();
+
+            Message::encode(&mut self.stream, MessageId::Request, &mut block_payload).await?;
+
+            // TODO: timeout and return block to submit if timed out
+            let mut msg;
+            loop {
+                msg = Message::decode(&mut self.stream).await?;
+
+                match msg.id {
+                    MessageId::Choke => {
+                        self.choked = true;
+                        submit.send(block).await.expect("we still have a receiver");
+                        continue 'task;
+                    }
+                    MessageId::Piece => {
+                        let payload_len = msg.payload.len();
+                        let mut payload = io::Cursor::new(msg.payload);
+
+                        let block_res = block::Response::new(&mut payload, payload_len).await?;
+                        anyhow::ensure!(!block_res.block().is_empty());
+                        eprintln!("Received piece");
+
+                        if block_res.index() != npiece
+                            || block_res.begin() as usize != block * BLOCK_SIZE as usize
+                        {
+                            // msg that we no longer need/are responsible for
+                        } else {
+                            // assert_eq!(block_res.block().len(), block_size);
+                            finish.send(block_res).await.expect("");
+
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 pub struct Bitfield {

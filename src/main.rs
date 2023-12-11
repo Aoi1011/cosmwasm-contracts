@@ -46,6 +46,7 @@ enum Commands {
     Download {
         #[clap(short, long)]
         output: PathBuf,
+
         torrent: PathBuf,
     },
 }

@@ -1,12 +1,13 @@
-use std::{collections::BinaryHeap, net::SocketAddrV4};
+use std::collections::BinaryHeap;
 
 use futures_util::StreamExt;
+use sha1::{Digest, Sha1};
 
 use crate::{
     block::BLOCK_SIZE,
     peer::Peer,
     piece::Piece,
-    torrent::{File, Torrent},
+    torrent::{File, Keys, Torrent},
     tracker,
 };
 
@@ -58,7 +59,7 @@ pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
 
     assert!(no_peers.is_empty());
 
-    let all_pieces = vec![0; t.length()];
+    let mut all_pieces = vec![0; t.length()];
     while let Some(piece) = need_pieces.pop() {
         let plength = piece.length();
         let npiece = piece.index();
@@ -71,21 +72,91 @@ pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
 
         let peers: Vec<_> = peers
             .iter_mut()
-            .filter_map(|(peer_i, peer)| piece.peers().contains(&peer_i).then_some(peer));
+            .enumerate()
+            .filter_map(|(peer_i, peer)| piece.peers().contains(&peer_i).then_some(peer))
+            .collect();
 
-        let (submit, tasks) = kanal
+        let (submit, tasks) = kanal::bounded_async(total_blocks);
+        for block in 0..total_blocks {
+            submit
+                .send(block)
+                .await
+                .expect("bound holds all these limits");
+        }
+
+        let (finish, mut done) = tokio::sync::mpsc::channel(total_blocks);
+        let mut participants = futures_util::stream::FuturesUnordered::new();
+        for peer in peers {
+            participants.push(peer.participate(
+                piece.index() as u32,
+                total_blocks as u32,
+                piece_length as u32,
+                submit.clone(),
+                tasks.clone(),
+                finish.clone(),
+            ));
+        }
+        drop(submit);
+        drop(finish);
+        drop(tasks);
+
+        let mut all_blocks: Vec<u8> = vec![0; piece_length];
+        let mut bytes_received = 0;
+        loop {
+            tokio::select! {
+                joined = participants.next(), if !participants.is_empty() => {
+                    // if a participant ends early, it's either slow or failed.
+                    match joined {
+                        None => {},
+                        Some(Ok(_)) => {},
+                        Some(Err(_)) => {},
+                    }
+                },
+
+                piece = done.recv() => {
+                // keep track of the bytes in message
+                    if let Some(piece) = piece {
+                        // let piece = Piece::ref_from_bytes(&piece.block()[..]).expect("always get all Piece response fields from peer");
+                        all_blocks[piece.begin() as usize ..][..piece.block().len()].copy_from_slice(piece.block());
+                        bytes_received += piece.block().len();
+                        if bytes_received ==  piece_length {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+
+                },
+            }
+        }
+        drop(participants);
+
+        if bytes_received == piece_length {
+            // great, we got all the bytes
+        } else {
+            // we'll need to connect to more peers, and make sure that those additional peers also
+            // have this piece, and then download the piece we _didn't_ get from them.
+            // probably also stick this back onto the pices_heap
+            anyhow::bail!("no peers left to get piece {}", piece.index());
+        }
+
+        let mut hasher = Sha1::new();
+        hasher.update(&all_blocks);
+        let hash: [u8; 20] = hasher.finalize().try_into().expect("");
+        assert_eq!(hash, piece.hash());
+
+        all_pieces[piece.index() * t.info.plength..][..piece_length].copy_from_slice(&all_blocks);
     }
-    let mut output_file = tokio::fs::File::options()
-        .write(true)
-        .create(true)
-        .open(&output)
-        .await
-        .unwrap();
-    output_file.write_all(&all_pieces).await?;
 
     Ok(Downloaded {
-        bytes: todo!(),
-        files: todo!(),
+        bytes: all_pieces,
+        files: match &t.info.keys {
+            Keys::SingleFile { length } => vec![File {
+                length: *length,
+                path: vec![t.info.name.clone()],
+            }],
+            Keys::MultiFile { files } => files.clone(),
+        },
     })
 }
 
