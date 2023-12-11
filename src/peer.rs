@@ -1,5 +1,12 @@
+use std::{io, net::SocketAddrV4};
+
 use anyhow::Context;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    net::TcpStream,
+};
+
+use crate::block::{self, BLOCK_SIZE};
 
 #[derive(Debug, Clone)]
 pub struct Handshake {
@@ -8,6 +15,199 @@ pub struct Handshake {
     pub reserved: Vec<u8>,
     pub info_hash: Vec<u8>,
     pub peer_id: Vec<u8>,
+}
+
+pub struct Peer {
+    addr: SocketAddrV4,
+    stream: TcpStream,
+    bitfield: Bitfield,
+    choked: bool,
+}
+
+impl Peer {
+    pub async fn new(addr: SocketAddrV4, info_hash: &[u8; 20]) -> anyhow::Result<Self> {
+        let mut stream = TcpStream::connect(addr).await.context("connect to peer")?;
+
+        let handshake = Handshake::new(info_hash);
+        {
+            let mut handshake_bytes = handshake.bytes();
+            stream.write_all(&mut handshake_bytes).await?;
+
+            stream.read_exact(&mut handshake_bytes).await?;
+        }
+
+        anyhow::ensure!(handshake.length == 19);
+        anyhow::ensure!(handshake.protocol == *b"BitTorrent protocol");
+
+        let bitfield = Message::decode(&mut stream).await?;
+        anyhow::ensure!(bitfield.id == MessageId::Bitfield);
+        eprintln!("Received bitfield");
+
+        Ok(Self {
+            addr,
+            stream,
+            bitfield: Bitfield::from_payload(bitfield.payload),
+            choked: true,
+        })
+    }
+
+    pub(crate) async fn download_piece(
+        &mut self,
+        file_length: u32,
+        npiece: u32,
+        plength: u32,
+    ) -> anyhow::Result<Vec<u8>> {
+        eprintln!("start downloading piece: {npiece}, piece length: {plength}");
+        // let mut buffer = [0; 68];
+        // let mut total_read = 0;
+        // while total_read < buffer.len() {
+        //     let read = self.stream.read(&mut buffer[total_read..]).await?;
+        //     if read == 0 {
+        //         return Err(anyhow!("Connection closed by peer"));
+        //     }
+        //     total_read += read;
+        // }
+        // eprintln!("Total read: {total_read}");
+
+        // let _handshake_res = Handshake::from_bytes(&buffer);
+
+        Message::encode(&mut self.stream, MessageId::Interested, &mut []).await?;
+
+        let unchoke = Message::decode(&mut self.stream).await?;
+        anyhow::ensure!(unchoke.id == MessageId::Unchoke);
+        eprintln!("Received unchoke");
+
+        let mut all_pieces: Vec<u8> = Vec::new();
+        let piece_length = plength.min(file_length - plength * npiece);
+        let total_blocks = if piece_length % BLOCK_SIZE == 0 {
+            piece_length / BLOCK_SIZE
+        } else {
+            (piece_length / BLOCK_SIZE) + 1
+        };
+
+        for nblock in 0..total_blocks {
+            let block_req = block::Request::new(npiece as u32, nblock, piece_length);
+            let mut block_payload = block_req.encode();
+
+            Message::encode(&mut self.stream, MessageId::Request, &mut block_payload).await?;
+
+            let piece = Message::decode(&mut self.stream).await?;
+            let payload_len = piece.payload.len();
+            let mut payload = io::Cursor::new(piece.payload);
+
+            let block_res = block::Response::new(&mut payload, payload_len).await?;
+            all_pieces.extend(block_res.block());
+        }
+
+        Ok(all_pieces)
+    }
+
+    pub(crate) fn has_piece(&self, piece_i: usize) -> bool {
+        self.bitfield.has_piece(piece_i)
+    }
+
+    pub(crate) async fn participate(
+        &mut self,
+        npiece: u32,
+        nblocks: u32,
+        piece_length: u32,
+        submit: kanal::AsyncSender<usize>,
+        tasks: kanal::AsyncReceiver<usize>,
+        finish: tokio::sync::mpsc::Sender<block::Response>,
+    ) -> anyhow::Result<()> {
+        Message::encode(&mut self.stream, MessageId::Interested, &mut []).await?;
+
+        'task: loop {
+            while self.choked {
+                let unchoke = Message::decode(&mut self.stream).await?;
+                match unchoke.id {
+                    MessageId::Unchoke => {
+                        self.choked = false;
+                        anyhow::ensure!(unchoke.payload.is_empty());
+                        eprintln!("Received unchoke");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            let Ok(block) = tasks.recv().await else {
+                break;
+            };
+
+            let block_req = block::Request::new(npiece as u32, block as u32, piece_length);
+            let mut block_payload = block_req.encode();
+
+            Message::encode(&mut self.stream, MessageId::Request, &mut block_payload).await?;
+
+            // TODO: timeout and return block to submit if timed out
+            let mut msg;
+            loop {
+                msg = Message::decode(&mut self.stream).await?;
+
+                match msg.id {
+                    MessageId::Choke => {
+                        self.choked = true;
+                        submit.send(block).await.expect("we still have a receiver");
+                        continue 'task;
+                    }
+                    MessageId::Piece => {
+                        let payload_len = msg.payload.len();
+                        let mut payload = io::Cursor::new(msg.payload);
+
+                        let block_res = block::Response::new(&mut payload, payload_len).await?;
+                        anyhow::ensure!(!block_res.block().is_empty());
+                        eprintln!("Received piece");
+
+                        if block_res.index() != npiece
+                            || block_res.begin() as usize != block * BLOCK_SIZE as usize
+                        {
+                            // msg that we no longer need/are responsible for
+                        } else {
+                            // assert_eq!(block_res.block().len(), block_size);
+                            finish.send(block_res).await.expect("");
+
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+pub struct Bitfield {
+    payload: Vec<u8>,
+}
+
+impl Bitfield {
+    pub(crate) fn has_piece(&self, piece_i: usize) -> bool {
+        let byte_i = piece_i / 8;
+        let bit_i = (piece_i % 8) as u32;
+
+        let Some(&byte) = self.payload.get(byte_i) else {
+            return false;
+        };
+
+        byte & (1u8.rotate_right(bit_i + 1)) != 0
+    }
+
+    pub(crate) fn pieces(&self) -> impl Iterator<Item = usize> + '_ {
+        self.payload.iter().enumerate().flat_map(|(byte_i, &byte)| {
+            (0..u8::BITS).filter_map(move |bit_i| {
+                let piece_i = byte_i * (u8::BITS as usize) + (bit_i as usize);
+                let mask = 1_u8.rotate_right(bit_i + 1);
+                (byte & mask != 0).then_some(piece_i)
+            })
+        })
+    }
+
+    pub(crate) fn from_payload(payload: Vec<u8>) -> Self {
+        Self { payload }
+    }
 }
 
 impl Handshake {

@@ -1,6 +1,6 @@
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-const BLOCK_SIZE: u32 = 1 << 14;
+pub(crate) const BLOCK_SIZE: u32 = 1 << 14;
 
 #[derive(Debug, Clone)]
 pub struct Request {
@@ -60,6 +60,10 @@ impl Response {
 
     pub fn index(&self) -> u32 {
         self.index
+    }
+
+    pub fn begin(&self) -> u32 {
+        self.begin
     }
 
     pub fn block(&self) -> &[u8] {

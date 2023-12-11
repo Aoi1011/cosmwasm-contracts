@@ -1,10 +1,13 @@
-use std::{fmt, path::PathBuf};
+use std::{fmt, path::Path};
 
+use anyhow::Context;
 use serde::{
     de::{self, Visitor},
     Deserialize, Deserializer, Serialize, Serializer,
 };
 use sha1::{Digest, Sha1};
+
+use crate::download::{self, Downloaded};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Torrent {
@@ -15,9 +18,12 @@ pub struct Torrent {
 }
 
 impl Torrent {
-    pub fn new(torrent: PathBuf) -> anyhow::Result<Self> {
-        let bytes = std::fs::read(torrent)?;
-        let torrent: Torrent = serde_bencode::from_bytes(&bytes)?;
+    pub async fn read(torrent: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let dot_torrent = tokio::fs::read(torrent)
+            .await
+            .context("read torrent file")?;
+        let torrent: Torrent =
+            serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
 
         Ok(torrent)
     }
@@ -34,6 +40,23 @@ impl Torrent {
             Keys::SingleFile { length } => *length,
             Keys::MultiFile { files } => files.iter().map(|file| file.length).sum(),
         }
+    }
+
+    pub fn print_tree(&self) {
+        match &self.info.keys {
+            Keys::SingleFile { .. } => {
+                eprintln!("{}", self.info.name);
+            }
+            Keys::MultiFile { files } => {
+                for file in files {
+                    eprintln!("{:?}", file.path.join(std::path::MAIN_SEPARATOR_STR));
+                }
+            }
+        }
+    }
+
+    pub async fn donwload_all(&self) -> anyhow::Result<Downloaded> {
+        download::all(self).await
     }
 }
 

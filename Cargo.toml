@@ -11,7 +11,9 @@ aquatic_udp_protocol = "0.8.0"
 bincode = "1.3.3"
 byteorder = "1.5.0"
 clap = { version = "4.4.8", features = ["derive"] }
+futures-util = { version = "0.3.29", features = ["sink"] }
 hex = "0.4.3"
+kanal = "0.1.0-pre8"
 rand = "0.8.5"
 reqwest = "0.11.22"
 serde = { version  = "1.0.193", features = ["derive"] }
