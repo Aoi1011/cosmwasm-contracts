@@ -210,9 +210,6 @@ async fn main() -> anyhow::Result<()> {
                                     tracker::udp::Response::Announce(announce_res) => {
                                         assert_eq!(announce_res.transaction_id.0, transaction_id);
 
-                                        // action = 1;
-                                        // connection_id = announce_res.connection_id.0;
-
                                         eprintln!("Peers");
                                         for (idx, peer) in announce_res.peers.iter().enumerate() {
                                             eprintln!("Peer {idx}: {peer}");
@@ -220,6 +217,7 @@ async fn main() -> anyhow::Result<()> {
 
                                         break 'transmit;
                                     }
+                                    _ => {},
                                 }
                             }
                             Err(e) => {
@@ -354,6 +352,8 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Download { output, torrent } => {
             let t = Torrent::read(torrent).await?;
+
+            t.print_tree();
 
             let files = download::all(&t).await?;
             tokio::fs::write(

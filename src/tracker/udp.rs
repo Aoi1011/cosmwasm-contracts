@@ -1,10 +1,13 @@
 use std::{
+    borrow::Cow,
     io::{self, Cursor, Read, Write},
     net::{Ipv4Addr, SocketAddrV4},
 };
 
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use serde::Deserialize;
+
+use crate::torrent::Hashes;
 
 const PROTOCOL_IDENTIFIER: u64 = 0x0417_2710_1980;
 
@@ -13,6 +16,13 @@ pub struct TransactionId(pub u32);
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Deserialize)]
 pub struct ConnectionId(pub u64);
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct TorrentScrapeStatistics {
+    pub seeders: u32,
+    pub completed: u32,
+    pub leechers: u32,
+}
 
 /// Offset  Size            Name            Value
 /// 0       64-bit integer  protocol_id     0x41727101980 // magic constant
@@ -86,10 +96,18 @@ impl AnnounceRequest {
     }
 }
 
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct ScrapeRequest {
+    pub connection_id: ConnectionId,
+    pub transaction_id: TransactionId,
+    pub info_hashes: Hashes,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     Connect(ConnectRequest),
     Announce(AnnounceRequest),
+    Scrape(ScrapeRequest),
 }
 
 impl From<ConnectRequest> for Request {
@@ -101,6 +119,12 @@ impl From<ConnectRequest> for Request {
 impl From<AnnounceRequest> for Request {
     fn from(value: AnnounceRequest) -> Self {
         Self::Announce(value)
+    }
+}
+
+impl From<ScrapeRequest> for Request {
+    fn from(value: ScrapeRequest) -> Self {
+        Self::Scrape(value)
     }
 }
 
@@ -128,6 +152,15 @@ impl Request {
                 bytes.write_u32::<NetworkEndian>(r.key)?;
                 bytes.write_i32::<NetworkEndian>(r.num_want)?;
                 bytes.write_u16::<NetworkEndian>(r.port)?;
+            }
+            Request::Scrape(r) => {
+                bytes.write_u64::<NetworkEndian>(r.connection_id.0)?;
+                bytes.write_u32::<NetworkEndian>(2)?;
+                bytes.write_u32::<NetworkEndian>(r.transaction_id.0)?;
+
+                for info_hash in r.info_hashes.0 {
+                    bytes.write_all(&info_hash)?;
+                }
             }
         }
 
@@ -165,9 +198,23 @@ pub struct AnnounceResponse {
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
+pub struct ScrapeResponse {
+    pub transaction_id: TransactionId,
+    pub torrent_stats: Vec<TorrentScrapeStatistics>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErrorResponse {
+    pub transaction_id: TransactionId,
+    pub message: Cow<'static, str>,
+}
+
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub enum Response {
     Connect(ConnectResponse),
     Announce(AnnounceResponse),
+    Scrape(ScrapeResponse),
+    Error(ErrorResponse),
 }
 
 impl Response {
@@ -175,10 +222,10 @@ impl Response {
         let mut cursor = Cursor::new(bytes);
         let action = cursor.read_u32::<NetworkEndian>()?;
 
+        let transaction_id = TransactionId(cursor.read_u32::<NetworkEndian>()?);
         match action {
             // Connect
             0 => {
-                let transaction_id = TransactionId(cursor.read_u32::<NetworkEndian>()?);
                 let connection_id = ConnectionId(cursor.read_u64::<NetworkEndian>()?);
 
                 Ok(Self::Connect(ConnectResponse {
@@ -189,7 +236,6 @@ impl Response {
 
             // Announce
             1 => {
-                let transaction_id = TransactionId(cursor.read_u32::<NetworkEndian>()?);
                 let interval = cursor.read_u32::<NetworkEndian>()?;
                 let leechers = cursor.read_u32::<NetworkEndian>()?;
                 let seeders = cursor.read_u32::<NetworkEndian>()?;
@@ -216,19 +262,48 @@ impl Response {
                     peers,
                 }))
             }
+
+            // Scrape
+            2 => {
+                let position = cursor.position() as usize;
+                let inner = cursor.into_inner();
+
+                let stats = inner[position..]
+                    .chunks_exact(12)
+                    .map(|chunk| {
+                        let mut cursor = Cursor::new(chunk);
+
+                        let seeders = cursor.read_u32::<NetworkEndian>().unwrap();
+                        let downloads = cursor.read_u32::<NetworkEndian>().unwrap();
+                        let leechers = cursor.read_u32::<NetworkEndian>().unwrap();
+
+                        TorrentScrapeStatistics {
+                            seeders,
+                            completed: downloads,
+                            leechers,
+                        }
+                    })
+                    .collect();
+
+                Ok(Self::Scrape(ScrapeResponse {
+                    transaction_id,
+                    torrent_stats: stats,
+                }))
+            }
+
+            // Error
+            3 => {
+                let position = cursor.position() as usize;
+                let inner = cursor.into_inner();
+
+                Ok(Self::Error(ErrorResponse {
+                    transaction_id,
+                    message: String::from_utf8_lossy(&inner[position..])
+                        .into_owned()
+                        .into(),
+                }))
+            }
             op => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{op}"))),
         }
     }
-
-    // pub fn write(&self, bytes: &mut impl Write) -> Result<(), io::Error> {
-    //     match self {
-    //         Response::Connect(r) => {
-    //             bytes.write_u32::<NetworkEndian>(0)?;
-    //             bytes.write_u32::<NetworkEndian>(r.transaction_id.0)?;
-    //             bytes.write_u64::<NetworkEndian>(r.connection_id.0)?;
-    //         }
-    //     }
-
-    //     Ok(())
-    // }
 }

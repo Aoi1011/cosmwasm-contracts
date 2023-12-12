@@ -96,7 +96,7 @@ pub struct File {
     pub path: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hashes(pub Vec<[u8; 20]>);
 struct HashesVisitor;
 
