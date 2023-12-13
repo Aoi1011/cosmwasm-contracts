@@ -217,7 +217,7 @@ async fn main() -> anyhow::Result<()> {
 
                                         break 'transmit;
                                     }
-                                    _ => {},
+                                    _ => {}
                                 }
                             }
                             Err(e) => {
@@ -356,11 +356,24 @@ async fn main() -> anyhow::Result<()> {
             t.print_tree();
 
             let files = download::all(&t).await?;
-            tokio::fs::write(
-                &output,
-                files.into_iter().next().expect("always one file").bytes(),
-            )
-            .await?;
+
+            match &t.info.keys {
+                Keys::SingleFile { .. } => {
+                    eprintln!("{}", t.info.name);
+                    tokio::fs::write(
+                        &output,
+                        files.into_iter().next().expect("always one file").bytes(),
+                    )
+                    .await?;
+                }
+                Keys::MultiFile { .. } => {
+                    while let Some(file) = files.into_iter().next() {
+                        let file_path = file.path().join(std::path::MAIN_SEPARATOR_STR);
+                        eprintln!("{:?}", file_path);
+                        tokio::fs::write(&file_path, file.bytes()).await?;
+                    }
+                }
+            }
 
             println!("Downloaded test.torrent to {}.", output.display());
         }

@@ -297,8 +297,8 @@ pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
 }
 
 pub struct Downloaded {
-    bytes: Vec<u8>,
-    files: Vec<File>,
+    pub bytes: Vec<u8>,
+    pub files: Vec<File>,
 }
 
 impl<'a> IntoIterator for &'a Downloaded {
