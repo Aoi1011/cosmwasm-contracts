@@ -15,10 +15,8 @@ use crate::{
 
 pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
     let info_hash = t.info_hash();
-    let req = tracker::http::Request::new(&info_hash, t.length());
-    let url = req.url(&t.announce);
     let request = tracker::http::Request::new(&info_hash, t.length());
-    let addr = tracker::get_addr(&t.announce)?;
+    let addr = tracker::get_addr(&t.announce_list)?;
 
     let peers = match addr {
         tracker::Addr::Udp(url) => {
@@ -174,7 +172,7 @@ pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
                 }
             }
             Err(e) => {
-                eprintln!("connect to peer {peer_addr:?}: {e}");
+                eprintln!("fail to connect to peer {peer_addr:?}: {e}");
             }
         }
     }
@@ -193,7 +191,7 @@ pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
         }
     }
 
-    // assert!(no_peers.is_empty());
+    assert!(no_peers.is_empty());
 
     let mut all_pieces = vec![0; t.length()];
     while let Some(piece) = need_pieces.pop() {

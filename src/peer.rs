@@ -109,7 +109,7 @@ impl Peer {
     pub(crate) async fn participate(
         &mut self,
         npiece: u32,
-        nblocks: u32,
+        _nblocks: u32,
         piece_length: u32,
         submit: kanal::AsyncSender<usize>,
         tasks: kanal::AsyncReceiver<usize>,

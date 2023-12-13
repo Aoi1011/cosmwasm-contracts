@@ -23,25 +23,12 @@ struct Cli {
 #[derive(Subcommand)]
 #[clap(rename_all = "snake_case")]
 enum Commands {
-    Decode {
-        value: String,
-    },
     Info {
         torrent: PathBuf,
     },
     Peers {
         #[arg(long, short)]
         torrent: PathBuf,
-    },
-    Handshake {
-        torrent: PathBuf,
-        addr: SocketAddrV4,
-    },
-    DownloadPiece {
-        #[clap(short, long)]
-        output: PathBuf,
-        torrent: PathBuf,
-        piece_index: u32,
     },
     Download {
         #[clap(short, long)]
@@ -56,10 +43,6 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Decode { value } => {
-            let decoded: String = serde_bencode::from_str(&value).context("decode value")?;
-            println!("{decoded}");
-        }
         Commands::Info { torrent } => {
             let t_bytes = std::fs::read(torrent).context("read torrent file")?;
             let t: Torrent = serde_bencode::from_bytes(&t_bytes).context("parse torrent file")?;
@@ -69,16 +52,18 @@ async fn main() -> anyhow::Result<()> {
                 Keys::MultiFile { ref files } => files.iter().map(|file| file.length).sum(),
             };
 
-            println!("Tracker URL: {}", t.announce);
+            println!("Tracker URL: {}", t.announce_list);
             println!("Length: {}", file_length);
 
             let info_hash = t.info_hash();
             println!("Info Hash: {}", hex::encode(info_hash));
 
             println!("Piece Hashes:");
-            for piece in t.info.pieces.0 {
+            for piece in &t.info.pieces.0 {
                 println!("{}", hex::encode(piece));
             }
+
+            t.print_tree();
         }
         Commands::Peers { torrent } => {
             let t_bytes = std::fs::read(torrent).context("read torrent file")?;
@@ -88,11 +73,11 @@ async fn main() -> anyhow::Result<()> {
                 Keys::SingleFile { length } => length,
                 Keys::MultiFile { ref files } => files.iter().map(|file| file.length).sum(),
             };
-            println!("Tracker URL: {}", t.announce);
+            println!("Tracker URL: {}", t.announce_list);
             let info_hash = t.info_hash();
             let request = tracker::http::Request::new(&info_hash, file_length);
 
-            let addr = bittorrent_cli::tracker::get_addr(&t.announce)?;
+            let addr = bittorrent_cli::tracker::get_addr(&t.announce_list)?;
 
             match addr {
                 bittorrent_cli::tracker::Addr::Udp(url) => {
@@ -234,119 +219,6 @@ async fn main() -> anyhow::Result<()> {
                     for peer in res.peers.0 {
                         println!("{peer}");
                     }
-                }
-            }
-        }
-        Commands::Handshake { torrent, addr } => {
-            let t = Torrent::read(torrent).await?;
-            let info_hash = t.info_hash();
-
-            let mut stream = TcpStream::connect(addr).await?;
-
-            let handshake = Handshake::new(&info_hash);
-            let mut handshake_bytes = handshake.bytes();
-            stream.write_all(&mut handshake_bytes).await?;
-
-            let mut buffer = [0; 68];
-            let mut total_read = 0;
-            while total_read < buffer.len() {
-                let read = stream.read(&mut buffer[total_read..]).await?;
-                if read == 0 {
-                    return Err(anyhow!("Connection closed by peer"));
-                }
-                total_read += read;
-            }
-
-            let handshake_res = Handshake::from_bytes(&buffer);
-
-            println!("Peer ID: {}", hex::encode(handshake_res.peer_id));
-        }
-        Commands::DownloadPiece {
-            output,
-            torrent,
-            piece_index,
-        } => {
-            let t = Torrent::read(torrent).await?;
-            let info_hash = t.info_hash();
-            let request = tracker::http::Request::new(&info_hash, t.length());
-
-            let addr = bittorrent_cli::tracker::get_addr(&t.announce)?;
-
-            match addr {
-                tracker::Addr::Udp(_url) => {}
-                tracker::Addr::Http(url) => {
-                    let res = reqwest::get(request.url(&url.to_string())).await?;
-                    let tracker_res: tracker::http::Response =
-                        serde_bencode::from_bytes(&res.bytes().await?).context("parse response")?;
-
-                    let addr = tracker_res.peers.0[0];
-                    let mut stream = TcpStream::connect(addr).await?;
-
-                    let handshake = Handshake::new(&info_hash);
-                    let mut handshake_bytes = handshake.bytes();
-                    stream.write_all(&mut handshake_bytes).await?;
-
-                    let mut buffer = [0; 68];
-                    let mut total_read = 0;
-                    while total_read < buffer.len() {
-                        let read = stream.read(&mut buffer[total_read..]).await?;
-                        if read == 0 {
-                            return Err(anyhow!("Connection closed by peer"));
-                        }
-                        total_read += read;
-                    }
-
-                    let _handshake_res = Handshake::from_bytes(&buffer);
-
-                    let _bitfield = Message::decode(&mut stream).await?;
-
-                    Message::encode(&mut stream, MessageId::Interested, &mut []).await?;
-
-                    let _unchoke = Message::decode(&mut stream).await?;
-
-                    let plength = t.info.plength as u32;
-                    let piece_length = plength.min(t.length() as u32 - plength * piece_index);
-                    // let total_blocks = if piece_length % BLOCK_SIZE == 0 {
-                    //     piece_length / BLOCK_SIZE
-                    // } else {
-                    //     (piece_length / BLOCK_SIZE) + 1
-                    // };
-                    let block_size = 2_u32.pow(14);
-                    let mut remaining_piece = piece_length;
-
-                    let _ = tokio::fs::remove_file(&output).await;
-                    let mut output_file = tokio::fs::File::options()
-                        .write(true)
-                        .create(true)
-                        .open(&output)
-                        .await
-                        .unwrap();
-
-                    while remaining_piece > 0 {
-                        let begin = piece_length - remaining_piece;
-                        let block_size = std::cmp::min(block_size, remaining_piece);
-                        remaining_piece -= block_size;
-
-                        let block_req = block::Request {
-                            piece_index,
-                            begin,
-                            length: block_size,
-                        };
-                        let mut block_payload = block_req.encode();
-
-                        Message::encode(&mut stream, MessageId::Request, &mut block_payload)
-                            .await?;
-
-                        let piece = Message::decode(&mut stream).await?;
-                        let payload_len = piece.payload.len();
-                        let mut payload = io::Cursor::new(piece.payload);
-
-                        let block_res = block::Response::new(&mut payload, payload_len).await?;
-
-                        output_file.write_all(&block_res.block()).await?;
-                    }
-
-                    println!("Piece {piece_index} downloaded to {}", output.display());
                 }
             }
         }
