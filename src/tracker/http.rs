@@ -136,13 +136,17 @@ impl Serialize for Peers {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, SocketAddrV4};
+
+    use actix_web::{test, web, App, HttpResponse, Responder};
+
     use crate::{
         torrent::{Hashes, Info, Keys, Torrent},
         tracker,
     };
 
     #[test]
-    fn test_build_tracker_url() {
+    async fn test_build_tracker_url() {
         let t = Torrent {
             announce: "http://bttracker.debian.org:6969/announce".to_string(),
             info: Info {
@@ -175,5 +179,36 @@ mod tests {
         let tracker_req = tracker::http::Request::new(&info_hash, length);
 
         assert_eq!(tracker_req.url(&t.announce), "http://bttracker.debian.org:6969/announce?info_hash=%D8%F79%CE%C3%28%95l%CC%5B%BF%1F%86%D9%FD%CF%DB%A8%CE%B6&peer_id=00112233445566778899&port=6881&uploaded=0&downloaded=0&left=351272960&compact=1");
+    }
+
+    async fn mock_response() -> impl Responder {
+        let mut res_body: Vec<u8> = Vec::new();
+
+        res_body.extend(b"d8:intervali900e5:peers12:");
+        res_body.extend([192, 0, 2, 123, 0x1A, 0xE1]);
+        res_body.extend([127, 0, 0, 1, 0x1A, 0xE9]);
+        res_body.extend(b"e");
+
+        HttpResponse::Ok().body(res_body)
+    }
+
+    #[actix_rt::test]
+    async fn test_request_peers() {
+        let mut app = test::init_service(App::new().route("/", web::get().to(mock_response))).await;
+
+        let req = test::TestRequest::get().uri("/").to_request();
+        let res = test::call_service(&mut app, req).await;
+        let result = test::read_body(res).await;
+
+        eprintln!("{:?}", result);
+
+        let tracker_res: tracker::http::Response = serde_bencode::from_bytes(&result).unwrap();
+
+        let expected = vec![
+            SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 123), 6881),
+            SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 6889),
+        ];
+
+        assert_eq!(tracker_res.peers.0, expected);
     }
 }
