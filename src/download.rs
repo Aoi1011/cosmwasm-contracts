@@ -165,6 +165,8 @@ pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
     while let Some((peer_addr, peer)) = peers.next().await {
         match peer {
             Ok(peer) => {
+                eprintln!("Completed handshake with {peer_addr}");
+
                 peer_list.push(peer);
 
                 if peer_list.len() > 5 {
@@ -172,7 +174,7 @@ pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
                 }
             }
             Err(e) => {
-                eprintln!("fail to connect to peer {peer_addr:?}: {e}");
+                eprintln!("Could not handshake with {peer_addr}. Disconnecting: {e}");
             }
         }
     }

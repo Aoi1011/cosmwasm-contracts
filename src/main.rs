@@ -220,7 +220,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Download { output, torrent } => {
             let t = Torrent::read(torrent).await?;
 
-            t.print_tree();
+            println!("Starting download for {}", t.info.name);
 
             let files = download::all(&t).await?;
 
