@@ -1,17 +1,13 @@
-use std::{io, net::SocketAddrV4, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, Context};
 use bittorrent_cli::{
-    block, download,
-    peer::{Handshake, Message, MessageId},
+    download,
     torrent::{Keys, Torrent},
     tracker,
 };
 use clap::{Parser, Subcommand};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpStream, UdpSocket},
-};
+use tokio::net::UdpSocket;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -44,15 +40,14 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Info { torrent } => {
-            let t_bytes = std::fs::read(torrent).context("read torrent file")?;
-            let t: Torrent = serde_bencode::from_bytes(&t_bytes).context("parse torrent file")?;
+            let t = Torrent::read(torrent).await?;
 
             let file_length = match t.info.keys {
                 Keys::SingleFile { length } => length,
                 Keys::MultiFile { ref files } => files.iter().map(|file| file.length).sum(),
             };
 
-            println!("Tracker URL: {}", t.announce_list);
+            println!("Tracker URL: {}", t.announce);
             println!("Length: {}", file_length);
 
             let info_hash = t.info_hash();
@@ -73,11 +68,11 @@ async fn main() -> anyhow::Result<()> {
                 Keys::SingleFile { length } => length,
                 Keys::MultiFile { ref files } => files.iter().map(|file| file.length).sum(),
             };
-            println!("Tracker URL: {}", t.announce_list);
+            println!("Tracker URL: {}", t.announce);
             let info_hash = t.info_hash();
             let request = tracker::http::Request::new(&info_hash, file_length);
 
-            let addr = bittorrent_cli::tracker::get_addr(&t.announce_list)?;
+            let addr = bittorrent_cli::tracker::get_addr(&t.announce)?;
 
             match addr {
                 bittorrent_cli::tracker::Addr::Udp(url) => {

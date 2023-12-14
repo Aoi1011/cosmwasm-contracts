@@ -12,7 +12,7 @@ use crate::download::{self, Downloaded};
 #[derive(Debug, Clone, Deserialize)]
 pub struct Torrent {
     /// The URL of the tracker
-    pub announce_list: String,
+    pub announce: String,
 
     pub info: Info,
 }

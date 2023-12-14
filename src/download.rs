@@ -16,7 +16,7 @@ use crate::{
 pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
     let info_hash = t.info_hash();
     let request = tracker::http::Request::new(&info_hash, t.length());
-    let addr = tracker::get_addr(&t.announce_list)?;
+    let addr = tracker::get_addr(&t.announce)?;
 
     let peers = match addr {
         tracker::Addr::Udp(url) => {
