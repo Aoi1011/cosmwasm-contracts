@@ -133,3 +133,47 @@ impl Serialize for Peers {
         serializer.serialize_bytes(&single_slice)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        torrent::{Hashes, Info, Keys, Torrent},
+        tracker,
+    };
+
+    #[test]
+    fn test_build_tracker_url() {
+        let t = Torrent {
+            announce: "http://bttracker.debian.org:6969/announce".to_string(),
+            info: Info {
+                name: "debian-10.2.0-amd64-netinst.iso".to_string(),
+                plength: 262144,
+                pieces: Hashes(vec![
+                    [
+                        49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 97, 98, 99, 100, 101, 102, 103,
+                        104, 105, 106,
+                    ],
+                    [
+                        97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 49, 50, 51, 52, 53, 54, 55,
+                        56, 57, 48,
+                    ],
+                ]),
+                keys: Keys::SingleFile { length: 351272960 },
+            },
+        };
+
+        let info_hash = vec![
+            216, 247, 57, 206, 195, 40, 149, 108, 204, 91, 191, 31, 134, 217, 253, 207, 219, 168,
+            206, 182,
+        ];
+        let _peer_id = vec![
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        ];
+        let _port = 6882_u16;
+        let length = t.length();
+
+        let tracker_req = tracker::http::Request::new(&info_hash, length);
+
+        assert_eq!(tracker_req.url(&t.announce), "http://bttracker.debian.org:6969/announce?info_hash=%D8%F79%CE%C3%28%95l%CC%5B%BF%1F%86%D9%FD%CF%DB%A8%CE%B6&peer_id=00112233445566778899&port=6881&uploaded=0&downloaded=0&left=351272960&compact=1");
+    }
+}
