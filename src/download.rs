@@ -29,7 +29,7 @@ pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
             let mut transaction_id = 0;
             let mut connection_id: u64 = 0;
 
-            'transmit: loop {
+            loop {
                 match action {
                     // Connect
                     0 => {
@@ -134,7 +134,6 @@ pub async fn all(t: &Torrent) -> anyhow::Result<Downloaded> {
                                 eprintln!("Peers");
 
                                 break announce_res.peers;
-                                // break 'transmit;
                             }
                             _ => {}
                         }

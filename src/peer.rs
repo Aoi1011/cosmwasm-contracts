@@ -58,18 +58,6 @@ impl Peer {
         plength: u32,
     ) -> anyhow::Result<Vec<u8>> {
         eprintln!("start downloading piece: {npiece}, piece length: {plength}");
-        // let mut buffer = [0; 68];
-        // let mut total_read = 0;
-        // while total_read < buffer.len() {
-        //     let read = self.stream.read(&mut buffer[total_read..]).await?;
-        //     if read == 0 {
-        //         return Err(anyhow!("Connection closed by peer"));
-        //     }
-        //     total_read += read;
-        // }
-        // eprintln!("Total read: {total_read}");
-
-        // let _handshake_res = Handshake::from_bytes(&buffer);
 
         Message::encode(&mut self.stream, MessageId::Interested, &mut []).await?;
 
